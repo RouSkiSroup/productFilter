@@ -31,7 +31,7 @@
     function scrollToProductList() {
         const productList = document.getElementById('ui-id-1');
         if (productList) {
-            productList.scrollIntoView({ behavior: 'smooth' });
+            productList.scrollIntoView({ behavior: 'auto' });
         }
     }
 
@@ -40,7 +40,7 @@
         const products = Array.from(document.querySelectorAll('.box.browsingitem.js-box')).filter(product => product.style.display !== 'none');
         const latestVisibleProduct = products[products.length - 1];
         if (latestVisibleProduct) {
-            latestVisibleProduct.scrollIntoViewIfNeeded({ behavior: 'smooth' });
+            latestVisibleProduct.scrollIntoViewIfNeeded({ behavior: 'auto' });
         }
     }
 
