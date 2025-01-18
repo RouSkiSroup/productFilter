@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Product Filter by Text 2
-// @namespace    http://tampermonkey.net/
+// @namespace    Website filter
 // @version      1.0
 // @description  Filter products by specific text in the product tile
-// @author       Your Name
+// @author       Filip Jerabek
 // @match        https://www.alza.cz/*
 // @grant        none
+// @downloadURL  https://github.com/RouSkiSroup/productFilter/raw/main/script.js
+// @updateURL    https://github.com/RouSkiSroup/productFilter/raw/main/script.js
 // ==/UserScript==
 
 (function() {
