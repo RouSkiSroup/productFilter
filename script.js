@@ -13,7 +13,7 @@
 
     let filterTexts = []; // Array to store multiple filter texts
     let autoScrollMode = 1; // 0 = Disabled, 1 = Top of List, 2 = Latest Product
-    let filteringEnabled = true; // Toggle for filtering functionality
+    let filteringEnabled = false; // Toggle for filtering functionality
     let multiLoadPages = 5; // Default number of pages to load
     let isMultiLoading = false; // Flag to track if multi-load is in progress
     let currentLoadedPages = 0; // Counter for currently loaded pages
