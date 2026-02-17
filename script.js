@@ -263,7 +263,7 @@
 
     // Create toggle button for filtering
     const toggleFilterButton = document.createElement('button');
-    toggleFilterButton.textContent = 'Disable Filtering';
+    toggleFilterButton.textContent = 'Enable Filtering';
     toggleFilterButton.style.position = 'fixed';
     toggleFilterButton.style.top = '170px';
     toggleFilterButton.style.left = '10px';
@@ -354,7 +354,7 @@
     autoScrollStatus.style.backgroundColor = 'lightgray'; // Background color for better readability
     autoScrollStatus.style.padding = '5px 10px'; // Padding for better readability
     autoScrollStatus.style.borderRadius = '5px'; // Rounded corners
-    autoScrollStatus.textContent = 'Auto Scroll: Top of List'; // Initial status
+    autoScrollStatus.textContent = 'Auto Scroll: Disabled'; // Initial status
     document.body.insertBefore(autoScrollStatus, document.body.firstChild);
 
     // Append the search input to the page
