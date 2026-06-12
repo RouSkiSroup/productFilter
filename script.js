@@ -5,6 +5,8 @@
 // @description  Filter Alza.cz products by discount code text, with bulk page loading and auto-scroll
 // @author       Filip J.
 // @match        https://www.alza.cz/*
+// @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/script.js
+// @downloadURL  https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/script.js
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
