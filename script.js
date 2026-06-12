@@ -538,13 +538,6 @@
         updateBubble();
     }
 
-    function disableAutoLoadOnScroll() {
-        window.addEventListener('scroll', e => {
-            e.stopPropagation();
-            e.preventDefault();
-        }, true);
-    }
-
     // ─── Auto-update check ────────────────────────────────────────────────────────
     function isNewerVersion(remote, local) {
         const r = remote.split('.').map(Number);
@@ -666,7 +659,6 @@
         updateFilterToggle();
         updateScrollUI();
         updateAndApplyFilter(searchInput.value);
-        disableAutoLoadOnScroll();
         setTimeout(checkForUpdate, 3000);
     }
 
