@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.2.1
 // @description  Filter Alza.cz products by discount code text, with bulk page loading and auto-scroll
 // @author       Filip J.
 // @match        https://www.alza.cz/*
@@ -12,7 +12,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.2.0';
+    const CURRENT_VERSION = '2.2.1';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/script.js';
     const STORAGE = {
         filterTerms:   'pf_filter_terms',
@@ -177,12 +177,8 @@
         /* ── Load 1 page ── */
         #pf-load-one { width: 100%; margin-bottom: 6px; }
 
-        /* ── Scroll row ── */
-        #pf-scroll-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-        #pf-toggle-scroll { flex: 1; }
-        #pf-scroll-state {
-            font-size: 10px; color: #64748b; white-space: nowrap;
-        }
+        /* ── Scroll button ── */
+        #pf-toggle-scroll { width: 100%; margin-bottom: 6px; }
 
         /* ── Multi-load row ── */
         .pf-multiload-row {
@@ -219,6 +215,28 @@
         #pf-stop-row { display: none; margin-bottom: 4px; }
         #pf-stop { width: 100%; }
 
+        /* ── Update banner ── */
+        #pf-update-banner {
+            display: none; width: 100%; box-sizing: border-box;
+            margin-bottom: 10px; padding: 8px 12px;
+            background: linear-gradient(135deg, #92400e, #b45309);
+            border: 1px solid #f59e0b;
+            border-radius: 10px; cursor: pointer;
+            font-size: 12px; font-weight: 700; color: #fef3c7;
+            letter-spacing: 0.3px; text-align: center;
+            transition: opacity 0.15s, transform 0.1s;
+            animation: pf-pulse 2s ease-in-out infinite;
+        }
+        #pf-update-banner:hover { opacity: 0.9; transform: translateY(-1px); }
+        #pf-update-banner.applied {
+            background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.15);
+            color: #94a3b8; font-weight: 400; animation: none; cursor: default;
+        }
+        @keyframes pf-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.0); }
+            50%       { box-shadow: 0 0 0 4px rgba(245,158,11,0.3); }
+        }
+
         /* ── Spinner ── */
         @keyframes pf-spin { to { transform: rotate(360deg); } }
         .pf-spinner {
@@ -245,10 +263,11 @@
 
         <div id="pf-drag-handle">
             <span class="pf-header">🔍 Product Filter</span>
-            <span class="pf-version">v${CURRENT_VERSION}<span id="pf-update-link"></span></span>
+            <span class="pf-version">v${CURRENT_VERSION}</span>
         </div>
 
         <div id="pf-body">
+            <button id="pf-update-banner"></button>
             <button id="pf-toggle-filter">● Filtering OFF</button>
             <div id="pf-count"></div>
 
@@ -263,11 +282,7 @@
                 <hr class="pf-divider"/>
 
                 <button class="pf-btn" id="pf-load-one">📄 Load 1 Page &nbsp;<span style="color:#475569;font-weight:400;">(Ctrl)</span></button>
-
-                <div id="pf-scroll-row">
-                    <button class="pf-btn" id="pf-toggle-scroll">Next scroll option</button>
-                    <span id="pf-scroll-state">Scroll: Off</span>
-                </div>
+                <button class="pf-btn" id="pf-toggle-scroll">↕ Scroll: Off</button>
 
                 <hr class="pf-divider"/>
 
@@ -297,7 +312,6 @@
     const checkboxesEl     = document.getElementById('pf-checkboxes');
     const filterSection    = document.getElementById('pf-filter-section');
     const loadSection      = document.getElementById('pf-load-section');
-    const scrollState      = document.getElementById('pf-scroll-state');
     const loadStatus       = document.getElementById('pf-load-status');
     const pagesInput       = document.getElementById('pf-pages-input');
     const toggleFilter     = document.getElementById('pf-toggle-filter');
@@ -325,15 +339,15 @@
         checkboxesEl.appendChild(row);
     });
 
-    // ─── Draggable panel ─────────────────────────────────────────────────────────
-    (function makeDraggable() {
-        const handle = document.getElementById('pf-drag-handle');
-        let dragging = false, ox = 0, oy = 0;
+    // ─── Draggable panel + bubble ────────────────────────────────────────────────
+    function makeDraggable(el, handle) {
+        let dragging = false, ox = 0, oy = 0, didMove = false;
 
         handle.addEventListener('mousedown', e => {
             if (e.button !== 0) return;
             dragging = true;
-            const rect = panel.getBoundingClientRect();
+            didMove = false;
+            const rect = el.getBoundingClientRect();
             ox = e.clientX - rect.left;
             oy = e.clientY - rect.top;
             e.preventDefault();
@@ -341,16 +355,28 @@
 
         document.addEventListener('mousemove', e => {
             if (!dragging) return;
+            didMove = true;
             const x = e.clientX - ox;
             const y = e.clientY - oy;
-            panel.style.right  = 'auto';
-            panel.style.bottom = 'auto';
-            panel.style.left   = Math.max(0, Math.min(x, window.innerWidth  - panel.offsetWidth))  + 'px';
-            panel.style.top    = Math.max(0, Math.min(y, window.innerHeight - panel.offsetHeight)) + 'px';
+            el.style.right  = 'auto';
+            el.style.bottom = 'auto';
+            el.style.left   = Math.max(0, Math.min(x, window.innerWidth  - el.offsetWidth))  + 'px';
+            el.style.top    = Math.max(0, Math.min(y, window.innerHeight - el.offsetHeight)) + 'px';
         });
 
-        document.addEventListener('mouseup', () => { dragging = false; });
-    })();
+        document.addEventListener('mouseup', e => {
+            if (dragging && didMove) e.stopImmediatePropagation();
+            dragging = false;
+        });
+
+        // Return whether the last mouseup was a drag (suppress click)
+        handle.addEventListener('click', e => {
+            if (didMove) { e.stopImmediatePropagation(); didMove = false; }
+        }, true);
+    }
+
+    makeDraggable(panel, document.getElementById('pf-drag-handle'));
+    makeDraggable(bubble, bubble);
 
     // ─── Persistence ─────────────────────────────────────────────────────────────
     function save(key, value) { localStorage.setItem(key, value); }
@@ -474,10 +500,10 @@
     }
 
     // ─── Scroll logic ─────────────────────────────────────────────────────────────
-    const SCROLL_LABELS = ['Scroll: Off', 'Scroll: Top of List', 'Scroll: Latest Product'];
+    const SCROLL_LABELS = ['↕ Scroll: Off', '↕ Scroll: Top of List', '↕ Scroll: Latest Product'];
 
     function updateScrollUI() {
-        scrollState.textContent = SCROLL_LABELS[autoScrollMode];
+        toggleScrollBtn.textContent = SCROLL_LABELS[autoScrollMode];
         toggleScrollBtn.classList.toggle('pf-btn-active', autoScrollMode !== 0);
     }
 
@@ -491,10 +517,12 @@
         visible[visible.length - 1]?.scrollIntoView({ behavior: 'instant' });
     }
 
+    // Only scroll when user has explicitly enabled a scroll mode — use a longer
+    // interval so it doesn't fight user interaction.
     setInterval(() => {
         if (autoScrollMode === 1) scrollToProductList();
         else if (autoScrollMode === 2) scrollToLatestVisibleProduct();
-    }, 1000);
+    }, 2000);
 
     // ─── Load logic ───────────────────────────────────────────────────────────────
     function clickLoadMoreButton() {
@@ -563,36 +591,38 @@
                 if (!match) return;
                 const latest = match[1];
                 if (!isNewerVersion(latest, CURRENT_VERSION)) return;
-                const el = document.getElementById('pf-update-link');
-                if (!el) return;
-                const a = document.createElement('a');
-                a.href = RAW_URL;
-                a.target = '_blank';
-                a.rel = 'noopener';
-                a.style.cssText = 'color:#f59e0b; text-decoration:none; font-weight:600;';
-                a.textContent = ` ↑ v${latest}`;
-                a.addEventListener('click', () => {
+                const banner = document.getElementById('pf-update-banner');
+                if (!banner) return;
+                banner.textContent = `⬆ v${latest} available — click to update`;
+                banner.style.display = 'block';
+                banner.addEventListener('click', () => {
+                    window.open(RAW_URL, '_blank', 'noopener');
                     setTimeout(() => {
-                        const el2 = document.getElementById('pf-update-link');
-                        if (el2) el2.innerHTML = ' <span style="color:#94a3b8;">↻ Reload to apply</span>';
+                        banner.textContent = '↻ Reload the page to apply the update';
+                        banner.classList.add('applied');
                     }, 500);
                 });
-                el.appendChild(a);
             },
             onerror() {},
         });
     }
 
     // ─── MutationObserver ─────────────────────────────────────────────────────────
-    // Watches for new products injected by "Load more" and immediately filters them.
-    // Falls back to document.body on page variants where #boxes doesn't exist.
-    const observerTarget = document.querySelector('#boxes') || document.body;
-    new MutationObserver(mutations => {
-        if (mutations.some(m => m.type === 'childList' && m.addedNodes.length > 0)) {
-            filterProductsByText();
-            updateBubble();
-        }
-    }).observe(observerTarget, { childList: true, subtree: true });
+    // Watch #boxes for new product nodes and re-filter. Debounced to avoid
+    // hammering querySelectorAll on every minor DOM mutation.
+    // Only attach if #boxes exists — observing document.body with subtree:true
+    // would fire on every tooltip, image load, etc. and tank performance.
+    const observerTarget = document.querySelector('#boxes');
+    if (observerTarget) {
+        let debounceTimer = null;
+        new MutationObserver(() => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                filterProductsByText();
+                updateBubble();
+            }, 200);
+        }).observe(observerTarget, { childList: true, subtree: true });
+    }
 
     // ─── Event listeners ──────────────────────────────────────────────────────────
     bubble.addEventListener('click', () => {
