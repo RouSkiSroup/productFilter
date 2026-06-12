@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.2.0
 // @description  Filter Alza.cz products by discount code text, with bulk page loading and auto-scroll
 // @author       Filip J.
 // @match        https://www.alza.cz/*
@@ -12,7 +12,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.2';
+    const CURRENT_VERSION = '2.2.0';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/script.js';
     const STORAGE = {
         filterTerms:   'pf_filter_terms',
@@ -546,6 +546,19 @@
     }
 
     // ─── Auto-update check ────────────────────────────────────────────────────────
+    function isNewerVersion(remote, local) {
+        const r = remote.split('.').map(Number);
+        const l = local.split('.').map(Number);
+        const len = Math.max(r.length, l.length);
+        for (let i = 0; i < len; i++) {
+            const rv = r[i] ?? 0;
+            const lv = l[i] ?? 0;
+            if (rv > lv) return true;
+            if (rv < lv) return false;
+        }
+        return false;
+    }
+
     function checkForUpdate() {
         if (typeof GM_xmlhttpRequest === 'undefined') return;
         GM_xmlhttpRequest({
@@ -556,7 +569,7 @@
                 const match = resp.responseText.match(/@version\s+([\d.]+)/);
                 if (!match) return;
                 const latest = match[1];
-                if (latest === CURRENT_VERSION) return;
+                if (!isNewerVersion(latest, CURRENT_VERSION)) return;
                 const el = document.getElementById('pf-update-link');
                 if (!el) return;
                 const a = document.createElement('a');
