@@ -5,8 +5,8 @@
 // @description  Filter Alza.cz products by discount code text, with bulk page loading and auto-scroll
 // @author       Filip J.
 // @match        https://www.alza.cz/*
-// @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/script.js
-// @downloadURL  https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/script.js
+// @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
+// @downloadURL  https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
@@ -15,7 +15,7 @@
 
     // ─── Constants ───────────────────────────────────────────────────────────────
     const CURRENT_VERSION = '2.2.1';
-    const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/script.js';
+    const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         filterTerms:   'pf_filter_terms',
         filterEnabled: 'pf_filter_enabled',
