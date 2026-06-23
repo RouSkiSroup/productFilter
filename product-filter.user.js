@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.3.2
-// @description  Filter Alza.cz products by discount code text, with bulk page loading, auto-scroll, and effective coupon price sorting
+// @version      2.4.0
+// @description  Filter Alza.cz products by minimum coupon discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J. & Gemini
 // @match        https://www.alza.cz/*
 // @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
@@ -14,20 +14,20 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.3.2';
+    const CURRENT_VERSION = '2.4.0';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
-        filterTerms:   'pf_filter_terms',
+        minDiscount:   'pf_min_discount',
         filterEnabled: 'pf_filter_enabled',
         pages:         'pf_pages',
         delay:         'pf_delay',
         minimized:     'pf_minimized',
         sortMode:      'pf_sort_mode',
     };
-    const COMMON_TERMS = ['alzadny50', 'alzadny40', 'alzadny30', 'alzadny25', 'alzadny20', 'alzadny15', 'alzadny10'];
+    const DISCOUNT_PRESETS = [0, 10, 20, 30, 40, 50];  // 0 = "Any coupon"
 
     // ─── State ───────────────────────────────────────────────────────────────────
-    let filterTexts      = [];
+    let minDiscount      = 0;       // minimum coupon discount %; 0 = any coupon
     let autoScrollMode   = 0;       // 0=off, 1=top, 2=latest
     let currentSortMode  = 0;       // 0=off/default, 1=cheapest first, 2=expensive first
     let filteringEnabled = false;
@@ -131,33 +131,24 @@
         }
         label.pf-label {
             display: block; color: #cbd5e1; font-size: 11px;
-            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
         }
-        #pf-search {
-            width: 100%; box-sizing: border-box;
-            background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 8px; color: #f1f5f9; padding: 7px 10px;
-            font-size: 13px; outline: none;
+        #pf-discount-presets {
+            display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px;
         }
-        #pf-search:focus {
-            border-color: #818cf8; box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
+        .pf-discount-btn {
+            flex: 1 1 auto; min-width: 38px;
+            padding: 6px 4px; border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px; background: rgba(255,255,255,0.06);
+            color: #94a3b8; font-size: 11px; font-weight: 600; cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            white-space: nowrap;
         }
-        #pf-search::placeholder { color: #64748b; }
-        #pf-info { font-size: 11px; color: #64748b; margin: 4px 0 8px; }
-        #pf-checkboxes {
-            max-height: 175px; overflow-y: auto;
-            background: rgba(255,255,255,0.04);
-            border-radius: 8px; padding: 8px; margin-bottom: 4px;
-            scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent;
+        .pf-discount-btn:hover { background: rgba(255,255,255,0.14); color: #e2e8f0; }
+        .pf-discount-btn.selected {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #fff; border-color: transparent;
         }
-        .pf-cb-row {
-            display: flex; align-items: center; gap: 7px;
-            padding: 3px 4px; border-radius: 5px; cursor: pointer;
-            transition: background 0.1s;
-        }
-        .pf-cb-row:hover { background: rgba(255,255,255,0.07); }
-        .pf-cb-row input[type=checkbox] { accent-color: #6366f1; width: 13px; height: 13px; cursor: pointer; }
-        .pf-cb-row span { font-size: 12px; color: #e2e8f0; }
 
         /* ── Divider ── */
         .pf-divider { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 10px 0; }
@@ -280,10 +271,8 @@
             <div id="pf-count"></div>
 
             <div id="pf-filter-section">
-                <label class="pf-label">Filter terms</label>
-                <input id="pf-search" type="text" placeholder="alzadny50, alzadny40, …"/>
-                <div id="pf-info">Separate terms with commas · updates live</div>
-                <div id="pf-checkboxes"></div>
+                <label class="pf-label">Minimum coupon discount</label>
+                <div id="pf-discount-presets"></div>
             </div>
 
             <div id="pf-load-section">
@@ -317,8 +306,7 @@
     document.body.appendChild(panel);
 
     // ─── Element refs ─────────────────────────────────────────────────────────────
-    const searchInput      = document.getElementById('pf-search');
-    const checkboxesEl     = document.getElementById('pf-checkboxes');
+    const presetsEl        = document.getElementById('pf-discount-presets');
     const filterSection    = document.getElementById('pf-filter-section');
     const loadSection      = document.getElementById('pf-load-section');
     const loadStatus       = document.getElementById('pf-load-status');
@@ -333,20 +321,22 @@
     const countEl          = document.getElementById('pf-count');
     const bubbleBadge      = document.getElementById('pf-bubble-badge');
 
-    // ─── Build checkboxes ────────────────────────────────────────────────────────
-    COMMON_TERMS.forEach(term => {
-        const row = document.createElement('label');
-        row.className = 'pf-cb-row';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.id = `pf-cb-${term}`;
-        cb.value = term;
-        cb.addEventListener('change', handleCheckboxChange);
-        const span = document.createElement('span');
-        span.textContent = term;
-        row.appendChild(cb);
-        row.appendChild(span);
-        checkboxesEl.appendChild(row);
+    // ─── Build discount preset buttons ───────────────────────────────────────────
+    DISCOUNT_PRESETS.forEach(value => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'pf-discount-btn';
+        btn.dataset.discount = String(value);
+        btn.textContent = value === 0 ? 'Any coupon' : `≥ ${value}%`;
+        btn.addEventListener('click', () => {
+            minDiscount = value;
+            save(STORAGE.minDiscount, minDiscount);
+            renderDiscountPresets();
+            applyFilter();
+            applyPriceSort();
+            updateBubble();
+        });
+        presetsEl.appendChild(btn);
     });
 
     // ─── Draggable panel + bubble ────────────────────────────────────────────────
@@ -392,8 +382,9 @@
     function save(key, value) { localStorage.setItem(key, value); }
 
     function loadSavedState() {
-        const savedTerms = localStorage.getItem(STORAGE.filterTerms);
-        searchInput.value = savedTerms !== null ? savedTerms : 'alzadny50';
+        minDiscount = parseInt(localStorage.getItem(STORAGE.minDiscount) || '0', 10);
+        if (!DISCOUNT_PRESETS.includes(minDiscount)) minDiscount = 0;
+        renderDiscountPresets();
 
         multiLoadPages = parseInt(localStorage.getItem(STORAGE.pages) || '5', 10);
         pagesInput.value = multiLoadPages;
@@ -418,8 +409,32 @@
         });
     }
 
+    function renderDiscountPresets() {
+        document.querySelectorAll('.pf-discount-btn').forEach(btn => {
+            btn.classList.toggle('selected', parseInt(btn.dataset.discount, 10) === minDiscount);
+        });
+    }
+
     // ─── Filter logic ─────────────────────────────────────────────────────────────
-    function filterProductsByText() {
+    // Parse a Czech-formatted price string ("1 090,-" or "594,-") into a number.
+    function parsePrice(text) {
+        if (!text) return NaN;
+        const digits = text.replace(/[^\d]/g, '');
+        return digits ? parseInt(digits, 10) : NaN;
+    }
+
+    // Returns the coupon discount % for a product card, or null if it has no
+    // usable coupon (missing coupon price, missing original price, or coupon
+    // not actually cheaper).
+    function getCouponDiscount(product) {
+        const couponPrice = parsePrice(product.querySelector('.coupon-block__price')?.textContent);
+        const originalPrice = parsePrice(product.querySelector('.js-price-box__primary-price__value')?.textContent);
+        if (!isFinite(couponPrice) || !isFinite(originalPrice) || originalPrice <= 0) return null;
+        if (couponPrice >= originalPrice) return null;
+        return Math.round((originalPrice - couponPrice) / originalPrice * 100);
+    }
+
+    function applyFilter() {
         const products = document.querySelectorAll('.box.browsingitem.js-box');
         const total = products.length;
 
@@ -429,16 +444,10 @@
             return;
         }
 
-        if (filterTexts.length === 0) {
-            products.forEach(p => { p.style.display = ''; });
-            updateCount('empty', total);
-            return;
-        }
-
         let shown = 0;
         products.forEach(product => {
-            const code = product.querySelector('.coupon-block__label--code')?.textContent || '';
-            const match = filterTexts.some(t => code.toUpperCase().includes(t.toUpperCase()));
+            const discount = getCouponDiscount(product);
+            const match = discount !== null && discount >= minDiscount;
             product.style.display = match ? '' : 'none';
             if (match) shown++;
         });
@@ -451,19 +460,13 @@
             countEl.className = '';
             return;
         }
-        if (shown === 'empty') {
-            countEl.textContent = `Enter a term to filter · ${total} loaded`;
-            countEl.className = '';
-            return;
-        }
         countEl.textContent = `${shown} / ${total} products shown`;
         countEl.className = shown === 0 ? 'no-results' : 'has-results';
     }
 
     function updateBubble() {
-        const isFilterActive = filteringEnabled && filterTexts.length > 0;
         const isSortActive = currentSortMode !== 0;
-        const active = isFilterActive || isSortActive;
+        const active = filteringEnabled || isSortActive;
 
         bubble.classList.toggle('active', active);
         if (active) {
@@ -471,34 +474,6 @@
                 .filter(p => p.style.display !== 'none').length;
             bubbleBadge.textContent = shown;
         }
-    }
-
-    function updateAndApplyFilter(value) {
-        filterTexts = value.split(',').map(t => t.trim()).filter(t => t !== '');
-        updateCheckboxes();
-        save(STORAGE.filterTerms, value);
-        filterProductsByText();
-        applyPriceSort();
-        updateBubble();
-    }
-
-    function updateCheckboxes() {
-        COMMON_TERMS.forEach(term => {
-            const cb = document.getElementById(`pf-cb-${term}`);
-            if (cb) cb.checked = filterTexts.includes(term);
-        });
-    }
-
-    function handleCheckboxChange(event) {
-        const term = event.target.value;
-        let current = searchInput.value.split(',').map(t => t.trim()).filter(t => t !== '');
-        if (event.target.checked && !current.includes(term)) {
-            current.push(term);
-        } else if (!event.target.checked) {
-            current = current.filter(t => t !== term);
-        }
-        searchInput.value = current.join(', ');
-        updateAndApplyFilter(searchInput.value);
     }
 
     function updateFilterToggle() {
@@ -620,7 +595,7 @@
         setTimeout(() => { loadStatus.textContent = ''; }, 3000);
 
         // Re-apply filter after loading (MutationObserver covers incremental; this covers the final state)
-        filterProductsByText();
+        applyFilter();
         applyPriceSort();
         updateBubble();
     }
@@ -678,7 +653,7 @@
             if (isSorting) return;
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
-                filterProductsByText();
+                applyFilter();
                 applyPriceSort();
                 updateBubble();
             }, 200);
@@ -696,11 +671,6 @@
         panel.style.display = 'none';
         bubble.style.display = 'flex';
         save(STORAGE.minimized, '1');
-    });
-
-    searchInput.addEventListener('input', () => updateAndApplyFilter(searchInput.value));
-    searchInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') updateAndApplyFilter(searchInput.value);
     });
 
     pagesInput.addEventListener('change', () => {
@@ -737,7 +707,7 @@
         filteringEnabled = !filteringEnabled;
         save(STORAGE.filterEnabled, filteringEnabled ? '1' : '0');
         updateFilterToggle();
-        filterProductsByText();
+        applyFilter();
         applyPriceSort();
         updateBubble();
     });
@@ -758,8 +728,9 @@
         updateFilterToggle();
         updateScrollUI();
         updateSortUI();
-        updateAndApplyFilter(searchInput.value);
-        if (currentSortMode !== 0) applyPriceSort();
+        applyFilter();
+        applyPriceSort();
+        updateBubble();
         setTimeout(checkForUpdate, 3000);
     }
 
