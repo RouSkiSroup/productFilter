@@ -379,6 +379,7 @@
             dragging = false;
         });
 
+        // Return whether the last mouseup was a drag (suppress click)
         handle.addEventListener('click', e => {
             if (didMove) { e.stopImmediatePropagation(); didMove = false; }
         }, true);
@@ -574,6 +575,8 @@
         visible[visible.length - 1]?.scrollIntoView({ behavior: 'instant' });
     }
 
+    // Only scroll when user has explicitly enabled a scroll mode — use a longer
+    // interval so it doesn't fight user interaction.
     setInterval(() => {
         if (autoScrollMode === 1) scrollToProductList();
         else if (autoScrollMode === 2) scrollToLatestVisibleProduct();
@@ -616,6 +619,7 @@
             : `✓ Loaded ${currentLoadedPages} pages`;
         setTimeout(() => { loadStatus.textContent = ''; }, 3000);
 
+        // Re-apply filter after loading (MutationObserver covers incremental; this covers the final state)
         filterProductsByText();
         applyPriceSort();
         updateBubble();
@@ -663,6 +667,10 @@
     }
 
     // ─── MutationObserver ─────────────────────────────────────────────────────────
+    // Watch #boxes for new product nodes and re-filter. Debounced to avoid
+    // hammering querySelectorAll on every minor DOM mutation.
+    // Only attach if #boxes exists — observing document.body with subtree:true
+    // would fire on every tooltip, image load, etc. and tank performance.
     const observerTarget = document.querySelector('#boxes');
     if (observerTarget) {
         let debounceTimer = null;
@@ -734,6 +742,7 @@
         updateBubble();
     });
 
+    // Ctrl shortcut — only fires when not typing in an input
     document.addEventListener('keydown', e => {
         const tag = document.activeElement?.tagName;
         const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
