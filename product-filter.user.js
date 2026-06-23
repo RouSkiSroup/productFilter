@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.3.1
+// @version      2.3.2
 // @description  Filter Alza.cz products by discount code text, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J. & Gemini
 // @match        https://www.alza.cz/*
@@ -14,7 +14,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.3.1';
+    const CURRENT_VERSION = '2.3.2';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         filterTerms:   'pf_filter_terms',
@@ -184,7 +184,7 @@
 
         /* ── Scroll button ── */
         #pf-toggle-scroll { width: 100%; margin-bottom: 6px; }
-
+        
         /* ── Sort button ── */
         #pf-toggle-sort { width: 100%; margin-bottom: 6px; }
 
@@ -500,6 +500,7 @@
         updateAndApplyFilter(searchInput.value);
     }
 
+    // ─── Panel control toggle logic ─────────────────────────────────────────────
     function updateFilterToggle() {
         if (filteringEnabled) {
             toggleFilter.textContent = '● Filtering ON';
@@ -512,219 +513,4 @@
         }
     }
 
-    // ─── Sort logic ───────────────────────────────────────────────────────────────
-    const SORT_LABELS = ['⚖ Sort: Default', '⚖ Sort: Cheapest First', '⚖ Sort: Expensive First'];
-
-    function updateSortUI() {
-        toggleSortBtn.textContent = SORT_LABELS[currentSortMode];
-        toggleSortBtn.classList.toggle('pf-btn-active', currentSortMode !== 0);
-    }
-
-    function applyPriceSort() {
-        if (currentSortMode === 0 || isSorting) return;
-        const container = document.getElementById('boxes');
-        if (!container) return;
-
-        isSorting = true;
-        const products = Array.from(container.querySelectorAll('.box.browsingitem.js-box'));
-
-        const getEffectivePrice = (el) => {
-            // Priority 1: Use specific coupon / "Alza Dny" special box price
-            const couponPriceEl = el.querySelector('.coupon-block__price');
-            if (couponPriceEl) {
-                const val = parseFloat(couponPriceEl.textContent.replace(/[^0-9]/g, ''));
-                if (!isNaN(val)) return val;
-            }
-            // Priority 2: Fall back to standard price listed on the page
-            const mainPriceEl = el.querySelector('.js-price-box__primary-price__value');
-            if (mainPriceEl) {
-                const val = parseFloat(mainPriceEl.textContent.replace(/[^0-9]/g, ''));
-                if (!isNaN(val)) return val;
-            }
-            return 0;
-        };
-
-        products.sort((a, b) => {
-            const priceA = getEffectivePrice(a);
-            const priceB = getEffectivePrice(b);
-            return currentSortMode === 1 ? priceA - priceB : priceB - priceA;
-        });
-
-        // Appending nodes that already exist dynamically updates their DOM positions
-        products.forEach(p => container.appendChild(p));
-
-        setTimeout(() => { isSorting = false; }, 50);
-    }
-
-    // ─── Scroll logic ─────────────────────────────────────────────────────────────
-    const SCROLL_LABELS = ['↕ Scroll: Off', '↕ Scroll: Top of List', '↕ Scroll: Latest Product'];
-
-    function updateScrollUI() {
-        toggleScrollBtn.textContent = SCROLL_LABELS[autoScrollMode];
-        toggleScrollBtn.classList.toggle('pf-btn-active', autoScrollMode !== 0);
-    }
-
-    function scrollToProductList() {
-        document.getElementById('ui-id-1')?.scrollIntoView({ behavior: 'instant' });
-    }
-
-    function scrollToLatestVisibleProduct() {
-        const visible = Array.from(document.querySelectorAll('.box.browsingitem.js-box'))
-            .filter(p => p.style.display !== 'none');
-        visible[visible.length - 1]?.scrollIntoView({ behavior: 'instant' });
-    }
-
-    setInterval(() => {
-        if (autoScrollMode === 1) scrollToProductList();
-        else if (autoScrollMode === 2) scrollToLatestVisibleProduct();
-    }, 2000);
-
-    // ─── Load logic ───────────────────────────────────────────────────────────────
-    function clickLoadMoreButton() {
-        document.querySelector('.js-button-more.button-more')?.click();
-    }
-
-    async function runMultiLoad() {
-        if (isMultiLoading) return;
-        isMultiLoading = true;
-        stopRequested = false;
-        currentLoadedPages = 0;
-
-        loadManyBtn.disabled = true;
-        loadManyBtn.innerHTML = `<span class="pf-spinner"></span>Loading…`;
-        stopRow.style.display = 'block';
-        loadStatus.textContent = `Loading: 0 / ${multiLoadPages}`;
-
-        for (let i = 0; i < multiLoadPages; i++) {
-            if (stopRequested) break;
-            clickLoadMoreButton();
-            await new Promise(resolve => setTimeout(resolve, loadDelay * 1000));
-            if (!stopRequested) {
-                currentLoadedPages++;
-                loadStatus.textContent = `Loading: ${currentLoadedPages} / ${multiLoadPages}`;
-            }
-        }
-
-        isMultiLoading = false;
-        loadManyBtn.disabled = false;
-        loadManyBtn.textContent = 'Load Multiple Pages';
-        stopRow.style.display = 'none';
-
-        const stopped = currentLoadedPages < multiLoadPages;
-        loadStatus.textContent = stopped
-            ? `⏹ Stopped after ${currentLoadedPages} pages`
-            : `✓ Loaded ${currentLoadedPages} pages`;
-        setTimeout(() => { loadStatus.textContent = ''; }, 3000);
-
-        filterProductsByText();
-        applyPriceSort();
-        updateBubble();
-    }
-
-    // ─── Auto-update check ────────────────────────────────────────────────────────
-    function isNewerVersion(remote, local) {
-        const r = remote.split('.').map(Number);
-        const l = local.split('.').map(Number);
-        const len = Math.max(r.length, l.length);
-        for (let i = 0; i < len; i++) {
-            const rv = r[i] ?? 0;
-            const lv = l[i] ?? 0;
-            if (rv > lv) return true;
-            if (rv < lv) return false;
-        }
-        return false;
-    }
-
-    // ─── MutationObserver ─────────────────────────────────────────────────────────
-    const observerTarget = document.querySelector('#boxes');
-    if (observerTarget) {
-        let debounceTimer = null;
-        new MutationObserver(() => {
-            if (isSorting) return;
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                filterProductsByText();
-                applyPriceSort();
-                updateBubble();
-            }, 200);
-        }).observe(observerTarget, { childList: true, subtree: true });
-    }
-
-    // ─── Event listeners ──────────────────────────────────────────────────────────
-    bubble.addEventListener('click', () => {
-        panel.style.display = 'block';
-        bubble.style.display = 'none';
-        save(STORAGE.minimized, '0');
-    });
-
-    document.getElementById('pf-minimize').addEventListener('click', () => {
-        panel.style.display = 'none';
-        bubble.style.display = 'flex';
-        save(STORAGE.minimized, '1');
-    });
-
-    searchInput.addEventListener('input', () => updateAndApplyFilter(searchInput.value));
-    searchInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') updateAndApplyFilter(searchInput.value);
-    });
-
-    pagesInput.addEventListener('change', () => {
-        multiLoadPages = parseInt(pagesInput.value, 10) || 5;
-        pagesInput.value = multiLoadPages;
-        save(STORAGE.pages, multiLoadPages);
-    });
-
-    document.querySelectorAll('.pf-delay-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            loadDelay = parseInt(btn.dataset.delay, 10);
-            save(STORAGE.delay, loadDelay);
-            renderDelayButtons();
-        });
-    });
-
-    loadOneBtn.addEventListener('click', clickLoadMoreButton);
-    loadManyBtn.addEventListener('click', runMultiLoad);
-    stopBtn.addEventListener('click', () => { stopRequested = true; });
-
-    toggleScrollBtn.addEventListener('click', () => {
-        autoScrollMode = (autoScrollMode + 1) % 3;
-        updateScrollUI();
-    });
-
-    toggleSortBtn.addEventListener('click', () => {
-        currentSortMode = (currentSortMode + 1) % 3;
-        save(STORAGE.sortMode, currentSortMode);
-        updateSortUI();
-        applyPriceSort();
-    });
-
-    toggleFilter.addEventListener('click', () => {
-        filteringEnabled = !filteringEnabled;
-        save(STORAGE.filterEnabled, filteringEnabled ? '1' : '0');
-        updateFilterToggle();
-        filterProductsByText();
-        applyPriceSort();
-        updateBubble();
-    });
-
-    document.addEventListener('keydown', e => {
-        const tag = document.activeElement?.tagName;
-        const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-            || document.activeElement?.isContentEditable;
-        if (e.key === 'Control' && !isTyping && !e.shiftKey && !e.altKey && !e.metaKey) {
-            clickLoadMoreButton();
-        }
-    });
-
-    // ─── Init ─────────────────────────────────────────────────────────────────────
-    function init() {
-        loadSavedState();
-        updateFilterToggle();
-        updateScrollUI();
-        updateSortUI();
-        updateAndApplyFilter(searchInput.value);
-        if (currentSortMode !== 0) applyPriceSort();
-    }
-
-    setTimeout(init, 1000);
-})();
+    // ─── Sort logic ────────────────────────────────
