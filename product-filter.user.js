@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.4.0
 // @description  Filter Alza.cz products by minimum coupon discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
-// @author       Filip J. & Gemini
+// @author       Filip J. & Tomi
 // @match        https://www.alza.cz/*
 // @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
 // @downloadURL  https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
@@ -20,7 +20,6 @@
         minDiscount:   'pf_min_discount',
         filterEnabled: 'pf_filter_enabled',
         pages:         'pf_pages',
-        delay:         'pf_delay',
         minimized:     'pf_minimized',
         sortMode:      'pf_sort_mode',
     };
@@ -32,7 +31,6 @@
     let currentSortMode  = 0;       // 0=off/default, 1=cheapest first, 2=expensive first
     let filteringEnabled = false;
     let multiLoadPages   = 5;
-    let loadDelay        = 2;
     let isMultiLoading   = false;
     let stopRequested    = false;
     let currentLoadedPages = 0;
@@ -191,21 +189,6 @@
         }
         #pf-pages-input:focus { border-color: #818cf8; }
 
-        /* ── Delay row ── */
-        .pf-delay-row { display: flex; align-items: center; gap: 5px; margin-bottom: 8px; }
-        .pf-delay-row span { font-size: 11px; color: #64748b; white-space: nowrap; }
-        .pf-delay-btn {
-            padding: 3px 8px; border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 6px; background: rgba(255,255,255,0.06);
-            color: #94a3b8; font-size: 11px; cursor: pointer;
-            transition: background 0.15s, color 0.15s;
-        }
-        .pf-delay-btn:hover { background: rgba(255,255,255,0.14); color: #e2e8f0; }
-        .pf-delay-btn.selected {
-            background: linear-gradient(135deg, #6366f1, #8b5cf6);
-            color: #fff; border-color: transparent;
-        }
-
         /* ── Load status ── */
         #pf-load-status {
             font-size: 11px; color: #a5b4fc;
@@ -285,15 +268,8 @@
                 <hr class="pf-divider"/>
 
                 <div class="pf-multiload-row">
-                    <input type="number" id="pf-pages-input" min="1" max="20" title="Pages to load"/>
+                    <input type="number" id="pf-pages-input" min="0" max="200" title="Pages to load (0 = all)"/>
                     <button class="pf-btn pf-btn-primary" id="pf-load-many" style="flex:1;">Load Multiple Pages</button>
-                </div>
-
-                <div class="pf-delay-row">
-                    <span>Delay per page:</span>
-                    <button class="pf-delay-btn" data-delay="1">1s</button>
-                    <button class="pf-delay-btn" data-delay="2">2s</button>
-                    <button class="pf-delay-btn" data-delay="3">3s</button>
                 </div>
 
                 <div id="pf-load-status"></div>
@@ -387,10 +363,9 @@
         renderDiscountPresets();
 
         multiLoadPages = parseInt(localStorage.getItem(STORAGE.pages) || '5', 10);
+        if (!Number.isFinite(multiLoadPages) || multiLoadPages < 0) multiLoadPages = 5;
         pagesInput.value = multiLoadPages;
-
-        loadDelay = parseInt(localStorage.getItem(STORAGE.delay) || '2', 10);
-        renderDelayButtons();
+        updateLoadManyLabel();
 
         filteringEnabled = localStorage.getItem(STORAGE.filterEnabled) === '1';
 
@@ -403,16 +378,14 @@
         }
     }
 
-    function renderDelayButtons() {
-        document.querySelectorAll('.pf-delay-btn').forEach(btn => {
-            btn.classList.toggle('selected', parseInt(btn.dataset.delay) === loadDelay);
-        });
-    }
-
     function renderDiscountPresets() {
         document.querySelectorAll('.pf-discount-btn').forEach(btn => {
             btn.classList.toggle('selected', parseInt(btn.dataset.discount, 10) === minDiscount);
         });
+    }
+
+    function updateLoadManyLabel() {
+        loadManyBtn.textContent = multiLoadPages === 0 ? 'Load All Pages' : 'Load Multiple Pages';
     }
 
     // ─── Filter logic ─────────────────────────────────────────────────────────────
@@ -558,8 +531,49 @@
     }, 2000);
 
     // ─── Load logic ───────────────────────────────────────────────────────────────
+    const PRODUCT_SELECTOR = '.box.browsingitem.js-box';
+    const LOAD_MORE_SELECTOR = '.js-button-more.button-more';
+    const WAIT_FOR_PRODUCTS_MS = 5000;
+
     function clickLoadMoreButton() {
-        document.querySelector('.js-button-more.button-more')?.click();
+        document.querySelector(LOAD_MORE_SELECTOR)?.click();
+    }
+
+    // True when there's no more content to load — either the pager has reached
+    // its last page, or the "load more" button is gone from the DOM.
+    function isAtLastPage() {
+        const btn = document.querySelector(LOAD_MORE_SELECTOR);
+        if (!btn || btn.offsetParent === null) return true;
+        const pageLinks = document.querySelectorAll('#pagerbottom .pgn');
+        if (pageLinks.length === 0) return false;
+        const sel = document.querySelector('#pagerbottom .pgn.sel');
+        const last = pageLinks[pageLinks.length - 1];
+        if (sel && last && sel === last) return true;
+        return false;
+    }
+
+    // Wait until the product count grows past `previousCount`, or the max
+    // timeout elapses. Resolves with the new count either way.
+    function waitForMoreProducts(previousCount, maxWaitMs = WAIT_FOR_PRODUCTS_MS) {
+        return new Promise(resolve => {
+            const target = document.querySelector('#boxes') || document.body;
+            const countNow = () => document.querySelectorAll(PRODUCT_SELECTOR).length;
+            if (countNow() > previousCount) return resolve(countNow());
+
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                observer.disconnect();
+                clearTimeout(timer);
+                resolve(countNow());
+            };
+            const observer = new MutationObserver(() => {
+                if (countNow() > previousCount) finish();
+            });
+            observer.observe(target, { childList: true, subtree: true });
+            const timer = setTimeout(finish, maxWaitMs);
+        });
     }
 
     async function runMultiLoad() {
@@ -568,30 +582,39 @@
         stopRequested = false;
         currentLoadedPages = 0;
 
+        const loadAll = multiLoadPages === 0;
+        const targetLabel = loadAll ? '∞' : String(multiLoadPages);
+
         loadManyBtn.disabled = true;
         loadManyBtn.innerHTML = `<span class="pf-spinner"></span>Loading…`;
         stopRow.style.display = 'block';
-        loadStatus.textContent = `Loading: 0 / ${multiLoadPages}`;
+        loadStatus.textContent = `Loading: 0 / ${targetLabel}`;
 
-        for (let i = 0; i < multiLoadPages; i++) {
-            if (stopRequested) break;
+        let reachedEnd = false;
+        while (!stopRequested && (loadAll || currentLoadedPages < multiLoadPages)) {
+            if (isAtLastPage()) { reachedEnd = true; break; }
+            const before = document.querySelectorAll(PRODUCT_SELECTOR).length;
             clickLoadMoreButton();
-            await new Promise(resolve => setTimeout(resolve, loadDelay * 1000));
-            if (!stopRequested) {
-                currentLoadedPages++;
-                loadStatus.textContent = `Loading: ${currentLoadedPages} / ${multiLoadPages}`;
-            }
+            const after = await waitForMoreProducts(before);
+            if (stopRequested) break;
+            currentLoadedPages++;
+            loadStatus.textContent = `Loading: ${currentLoadedPages} / ${targetLabel}`;
+            // If the click produced no new products, the page is exhausted (or stuck).
+            if (after === before) { reachedEnd = true; break; }
         }
 
         isMultiLoading = false;
         loadManyBtn.disabled = false;
-        loadManyBtn.textContent = 'Load Multiple Pages';
+        loadManyBtn.textContent = loadAll ? 'Load All Pages' : 'Load Multiple Pages';
         stopRow.style.display = 'none';
 
-        const stopped = currentLoadedPages < multiLoadPages;
-        loadStatus.textContent = stopped
-            ? `⏹ Stopped after ${currentLoadedPages} pages`
-            : `✓ Loaded ${currentLoadedPages} pages`;
+        if (stopRequested) {
+            loadStatus.textContent = `⏹ Stopped after ${currentLoadedPages} pages`;
+        } else if (reachedEnd) {
+            loadStatus.textContent = `✓ Loaded ${currentLoadedPages} pages (end reached)`;
+        } else {
+            loadStatus.textContent = `✓ Loaded ${currentLoadedPages} pages`;
+        }
         setTimeout(() => { loadStatus.textContent = ''; }, 3000);
 
         // Re-apply filter after loading (MutationObserver covers incremental; this covers the final state)
@@ -674,17 +697,11 @@
     });
 
     pagesInput.addEventListener('change', () => {
-        multiLoadPages = parseInt(pagesInput.value, 10) || 5;
+        const parsed = parseInt(pagesInput.value, 10);
+        multiLoadPages = Number.isFinite(parsed) && parsed >= 0 ? parsed : 5;
         pagesInput.value = multiLoadPages;
         save(STORAGE.pages, multiLoadPages);
-    });
-
-    document.querySelectorAll('.pf-delay-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            loadDelay = parseInt(btn.dataset.delay, 10);
-            save(STORAGE.delay, loadDelay);
-            renderDelayButtons();
-        });
+        updateLoadManyLabel();
     });
 
     loadOneBtn.addEventListener('click', clickLoadMoreButton);
