@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.3.2
 // @description  Filter Alza.cz products by discount code text, with bulk page loading, auto-scroll, and effective coupon price sorting
-// @author       Filip J. & Gemini
+// @author       Filip J.
 // @match        https://www.alza.cz/*
 // @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
 // @downloadURL  https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
