@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.5.0
+// @version      2.5.1
 // @description  Filter Alza.cz products by minimum coupon/benefit/AlzaPlus+ discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J. & Tomi
 // @match        https://www.alza.cz/*
@@ -14,7 +14,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.5.0';
+    const CURRENT_VERSION = '2.5.1';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         minDiscount:   'pf_min_discount',
@@ -398,17 +398,27 @@
 
     // Returns the best available discount % for a product card, or null if none.
     // Handles three price box types:
-    //   1. Coupon block  (.coupon-block__price vs .js-price-box__primary-price__value)
+    //   1. Coupon block  (.coupon-block__price)
     //   2. Benefit       (.ads-pb--benefit)
     //   3. AlzaPlus+     (.ads-pb--alza-plus)
-    // For types 2 & 3 the discounted price is in .ads-pb__price-value and the
-    // original is in .ads-pb__original-price (text like "Bez členství: 576,-").
+    // Always uses the true original (struck-through) price as the base so that
+    // combined discounts (e.g. Benefit + coupon) are calculated correctly.
     function getCouponDiscount(product) {
-        // Type 1: classic coupon block
+        // True original: the struck-through price shown on the card, e.g. "49 986,-"
+        const trueOriginal = parsePrice(
+            product.querySelector('.ads-pb__original-price--strike, .js-compare-price')?.textContent
+        );
+
+        // Type 1: classic coupon block — use coupon price vs true original
         const couponPrice = parsePrice(product.querySelector('.coupon-block__price')?.textContent);
-        const mainPrice   = parsePrice(product.querySelector('.js-price-box__primary-price__value')?.textContent);
-        if (isFinite(couponPrice) && isFinite(mainPrice) && mainPrice > 0 && couponPrice < mainPrice) {
-            return Math.round((mainPrice - couponPrice) / mainPrice * 100);
+        if (isFinite(couponPrice)) {
+            // Prefer the true struck-through original; fall back to the displayed main price
+            const base = isFinite(trueOriginal) && trueOriginal > couponPrice
+                ? trueOriginal
+                : parsePrice(product.querySelector('.js-price-box__primary-price__value')?.textContent);
+            if (isFinite(base) && base > 0 && couponPrice < base) {
+                return Math.round((base - couponPrice) / base * 100);
+            }
         }
 
         // Type 2 & 3: Benefit / AlzaPlus+ price box
