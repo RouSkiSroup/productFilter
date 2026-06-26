@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.4.0
-// @description  Filter Alza.cz products by minimum coupon discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
+// @version      2.5.0
+// @description  Filter Alza.cz products by minimum coupon/benefit/AlzaPlus+ discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J. & Tomi
 // @match        https://www.alza.cz/*
 // @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
@@ -14,7 +14,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.4.0';
+    const CURRENT_VERSION = '2.5.0';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         minDiscount:   'pf_min_discount',
@@ -396,15 +396,32 @@
         return digits ? parseInt(digits, 10) : NaN;
     }
 
-    // Returns the coupon discount % for a product card, or null if it has no
-    // usable coupon (missing coupon price, missing original price, or coupon
-    // not actually cheaper).
+    // Returns the best available discount % for a product card, or null if none.
+    // Handles three price box types:
+    //   1. Coupon block  (.coupon-block__price vs .js-price-box__primary-price__value)
+    //   2. Benefit       (.ads-pb--benefit)
+    //   3. AlzaPlus+     (.ads-pb--alza-plus)
+    // For types 2 & 3 the discounted price is in .ads-pb__price-value and the
+    // original is in .ads-pb__original-price (text like "Bez členství: 576,-").
     function getCouponDiscount(product) {
+        // Type 1: classic coupon block
         const couponPrice = parsePrice(product.querySelector('.coupon-block__price')?.textContent);
-        const originalPrice = parsePrice(product.querySelector('.js-price-box__primary-price__value')?.textContent);
-        if (!isFinite(couponPrice) || !isFinite(originalPrice) || originalPrice <= 0) return null;
-        if (couponPrice >= originalPrice) return null;
-        return Math.round((originalPrice - couponPrice) / originalPrice * 100);
+        const mainPrice   = parsePrice(product.querySelector('.js-price-box__primary-price__value')?.textContent);
+        if (isFinite(couponPrice) && isFinite(mainPrice) && mainPrice > 0 && couponPrice < mainPrice) {
+            return Math.round((mainPrice - couponPrice) / mainPrice * 100);
+        }
+
+        // Type 2 & 3: Benefit / AlzaPlus+ price box
+        const priceBox = product.querySelector('.ads-pb--benefit, .ads-pb--alza-plus');
+        if (priceBox) {
+            const discounted = parsePrice(priceBox.querySelector('.ads-pb__price-value')?.textContent);
+            const original   = parsePrice(priceBox.querySelector('.ads-pb__original-price')?.textContent);
+            if (isFinite(discounted) && isFinite(original) && original > 0 && discounted < original) {
+                return Math.round((original - discounted) / original * 100);
+            }
+        }
+
+        return null;
     }
 
     function applyFilter() {
@@ -478,16 +495,22 @@
         const products = Array.from(container.querySelectorAll('.box.browsingitem.js-box'));
 
         const getEffectivePrice = (el) => {
-            // Priority 1: Use specific coupon / "Alza Dny" special box price
+            // Priority 1: classic coupon block price
             const couponPriceEl = el.querySelector('.coupon-block__price');
             if (couponPriceEl) {
-                const val = parseFloat(couponPriceEl.textContent.replace(/[^0-9]/g, ''));
+                const val = parsePrice(couponPriceEl.textContent);
                 if (!isNaN(val)) return val;
             }
-            // Priority 2: Fall back to standard price listed on the page
+            // Priority 2: Benefit or AlzaPlus+ discounted price
+            const priceBox = el.querySelector('.ads-pb--benefit, .ads-pb--alza-plus');
+            if (priceBox) {
+                const val = parsePrice(priceBox.querySelector('.ads-pb__price-value')?.textContent);
+                if (!isNaN(val)) return val;
+            }
+            // Priority 3: fall back to standard listed price
             const mainPriceEl = el.querySelector('.js-price-box__primary-price__value');
             if (mainPriceEl) {
-                const val = parseFloat(mainPriceEl.textContent.replace(/[^0-9]/g, ''));
+                const val = parsePrice(mainPriceEl.textContent);
                 if (!isNaN(val)) return val;
             }
             return 0;
