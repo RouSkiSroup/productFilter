@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.2.1
-// @description  Filter Alza.cz products by discount code text, with bulk page loading and auto-scroll
+// @version      2.3.2
+// @description  Filter Alza.cz products by discount code text, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J.
 // @match        https://www.alza.cz/*
 // @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
@@ -14,7 +14,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.2.1';
+    const CURRENT_VERSION = '2.3.2';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         filterTerms:   'pf_filter_terms',
@@ -22,18 +22,21 @@
         pages:         'pf_pages',
         delay:         'pf_delay',
         minimized:     'pf_minimized',
+        sortMode:      'pf_sort_mode',
     };
     const COMMON_TERMS = ['alzadny50', 'alzadny40', 'alzadny30', 'alzadny25', 'alzadny20', 'alzadny15', 'alzadny10'];
 
     // ─── State ───────────────────────────────────────────────────────────────────
     let filterTexts      = [];
     let autoScrollMode   = 0;       // 0=off, 1=top, 2=latest
+    let currentSortMode  = 0;       // 0=off/default, 1=cheapest first, 2=expensive first
     let filteringEnabled = false;
     let multiLoadPages   = 5;
     let loadDelay        = 2;
     let isMultiLoading   = false;
     let stopRequested    = false;
     let currentLoadedPages = 0;
+    let isSorting        = false;
 
     // ─── CSS ─────────────────────────────────────────────────────────────────────
     const style = document.createElement('style');
@@ -182,6 +185,9 @@
         /* ── Scroll button ── */
         #pf-toggle-scroll { width: 100%; margin-bottom: 6px; }
 
+        /* ── Sort button ── */
+        #pf-toggle-sort { width: 100%; margin-bottom: 6px; }
+
         /* ── Multi-load row ── */
         .pf-multiload-row {
             display: flex; gap: 6px; align-items: center; margin-bottom: 4px;
@@ -285,6 +291,7 @@
 
                 <button class="pf-btn" id="pf-load-one">📄 Load 1 Page &nbsp;<span style="color:#475569;font-weight:400;">(Ctrl)</span></button>
                 <button class="pf-btn" id="pf-toggle-scroll">↕ Scroll: Off</button>
+                <button class="pf-btn" id="pf-toggle-sort">⚖ Sort: Default</button>
 
                 <hr class="pf-divider"/>
 
@@ -320,6 +327,7 @@
     const loadOneBtn       = document.getElementById('pf-load-one');
     const loadManyBtn      = document.getElementById('pf-load-many');
     const toggleScrollBtn  = document.getElementById('pf-toggle-scroll');
+    const toggleSortBtn    = document.getElementById('pf-toggle-sort');
     const stopBtn          = document.getElementById('pf-stop');
     const stopRow          = document.getElementById('pf-stop-row');
     const countEl          = document.getElementById('pf-count');
@@ -395,6 +403,8 @@
 
         filteringEnabled = localStorage.getItem(STORAGE.filterEnabled) === '1';
 
+        currentSortMode = parseInt(localStorage.getItem(STORAGE.sortMode) || '0', 10);
+
         const minimized = localStorage.getItem(STORAGE.minimized);
         if (minimized === '0') {
             panel.style.display = 'block';
@@ -451,7 +461,10 @@
     }
 
     function updateBubble() {
-        const active = filteringEnabled && filterTexts.length > 0;
+        const isFilterActive = filteringEnabled && filterTexts.length > 0;
+        const isSortActive = currentSortMode !== 0;
+        const active = isFilterActive || isSortActive;
+
         bubble.classList.toggle('active', active);
         if (active) {
             const shown = Array.from(document.querySelectorAll('.box.browsingitem.js-box'))
@@ -465,6 +478,7 @@
         updateCheckboxes();
         save(STORAGE.filterTerms, value);
         filterProductsByText();
+        applyPriceSort();
         updateBubble();
     }
 
@@ -492,13 +506,55 @@
             toggleFilter.textContent = '● Filtering ON';
             toggleFilter.classList.add('enabled');
             filterSection.style.display = 'block';
-            loadSection.style.display = 'block';
         } else {
             toggleFilter.textContent = '● Filtering OFF';
             toggleFilter.classList.remove('enabled');
             filterSection.style.display = 'none';
-            loadSection.style.display = 'none';
         }
+    }
+
+    // ─── Sort logic ───────────────────────────────────────────────────────────────
+    const SORT_LABELS = ['⚖ Sort: Default', '⚖ Sort: Cheapest First', '⚖ Sort: Expensive First'];
+
+    function updateSortUI() {
+        toggleSortBtn.textContent = SORT_LABELS[currentSortMode];
+        toggleSortBtn.classList.toggle('pf-btn-active', currentSortMode !== 0);
+    }
+
+    function applyPriceSort() {
+        if (currentSortMode === 0 || isSorting) return;
+        const container = document.getElementById('boxes');
+        if (!container) return;
+
+        isSorting = true;
+        const products = Array.from(container.querySelectorAll('.box.browsingitem.js-box'));
+
+        const getEffectivePrice = (el) => {
+            // Priority 1: Use specific coupon / "Alza Dny" special box price
+            const couponPriceEl = el.querySelector('.coupon-block__price');
+            if (couponPriceEl) {
+                const val = parseFloat(couponPriceEl.textContent.replace(/[^0-9]/g, ''));
+                if (!isNaN(val)) return val;
+            }
+            // Priority 2: Fall back to standard price listed on the page
+            const mainPriceEl = el.querySelector('.js-price-box__primary-price__value');
+            if (mainPriceEl) {
+                const val = parseFloat(mainPriceEl.textContent.replace(/[^0-9]/g, ''));
+                if (!isNaN(val)) return val;
+            }
+            return 0;
+        };
+
+        products.sort((a, b) => {
+            const priceA = getEffectivePrice(a);
+            const priceB = getEffectivePrice(b);
+            return currentSortMode === 1 ? priceA - priceB : priceB - priceA;
+        });
+
+        // Appending nodes that already exist dynamically updates their DOM positions
+        products.forEach(p => container.appendChild(p));
+
+        setTimeout(() => { isSorting = false; }, 50);
     }
 
     // ─── Scroll logic ─────────────────────────────────────────────────────────────
@@ -565,6 +621,7 @@
 
         // Re-apply filter after loading (MutationObserver covers incremental; this covers the final state)
         filterProductsByText();
+        applyPriceSort();
         updateBubble();
     }
 
@@ -618,9 +675,11 @@
     if (observerTarget) {
         let debounceTimer = null;
         new MutationObserver(() => {
+            if (isSorting) return;
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
                 filterProductsByText();
+                applyPriceSort();
                 updateBubble();
             }, 200);
         }).observe(observerTarget, { childList: true, subtree: true });
@@ -667,11 +726,19 @@
         updateScrollUI();
     });
 
+    toggleSortBtn.addEventListener('click', () => {
+        currentSortMode = (currentSortMode + 1) % 3;
+        save(STORAGE.sortMode, currentSortMode);
+        updateSortUI();
+        applyPriceSort();
+    });
+
     toggleFilter.addEventListener('click', () => {
         filteringEnabled = !filteringEnabled;
         save(STORAGE.filterEnabled, filteringEnabled ? '1' : '0');
         updateFilterToggle();
         filterProductsByText();
+        applyPriceSort();
         updateBubble();
     });
 
@@ -690,7 +757,9 @@
         loadSavedState();
         updateFilterToggle();
         updateScrollUI();
+        updateSortUI();
         updateAndApplyFilter(searchInput.value);
+        if (currentSortMode !== 0) applyPriceSort();
         setTimeout(checkForUpdate, 3000);
     }
 
