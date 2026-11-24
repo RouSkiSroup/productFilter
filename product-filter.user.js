@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.5.2
+// @version      2.5.3
 // @description  Filter Alza.cz products by minimum coupon/benefit/AlzaPlus+/Black Friday discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J. & Tomi
 // @match        https://www.alza.cz/*
@@ -14,7 +14,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.5.2';
+    const CURRENT_VERSION = '2.5.3';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         minDiscount:   'pf_min_discount',
@@ -585,8 +585,8 @@
 
     // ─── Load logic ───────────────────────────────────────────────────────────────
     const PRODUCT_SELECTOR = '.box.browsingitem.js-box';
-    const LOAD_MORE_SELECTOR = '.js-button-more.button-more';
-    const WAIT_FOR_PRODUCTS_MS = 5000;
+    const LOAD_MORE_SELECTOR = '.js-button-more, .button-more, a[class*="button-more"], a[class*="buttonMore"]';
+    const WAIT_FOR_PRODUCTS_MS = 8000;
 
     function clickLoadMoreButton() {
         document.querySelector(LOAD_MORE_SELECTOR)?.click();
@@ -597,11 +597,28 @@
     function isAtLastPage() {
         const btn = document.querySelector(LOAD_MORE_SELECTOR);
         if (!btn || btn.offsetParent === null) return true;
-        const pageLinks = document.querySelectorAll('#pagerbottom .pgn');
-        if (pageLinks.length === 0) return false;
-        const sel = document.querySelector('#pagerbottom .pgn.sel');
-        const last = pageLinks[pageLinks.length - 1];
-        if (sel && last && sel === last) return true;
+        const style = window.getComputedStyle(btn);
+        if (style.display === 'none' || style.visibility === 'hidden') return true;
+        if (btn.classList.contains('disabled') || btn.getAttribute('aria-disabled') === 'true') return true;
+
+        // Check pagerbottom: only considered at the last page if there is NO ellipsis,
+        // NO active next button, and the selected page is the last link.
+        const pager = document.getElementById('pagerbottom');
+        if (pager) {
+            const hasEllipsis = Array.from(pager.querySelectorAll('span')).some(s => s.textContent.includes('...'));
+            const nextBtn = pager.querySelector('.next, a[class*="next"]');
+            const hasNext = nextBtn && !nextBtn.classList.contains('disabled') && nextBtn.offsetParent !== null;
+
+            if (hasEllipsis || hasNext) return false;
+
+            const pageLinks = pager.querySelectorAll('.pgn');
+            if (pageLinks.length > 0) {
+                const sel = pager.querySelector('.pgn.sel, .pgn[aria-current="page"]');
+                const last = pageLinks[pageLinks.length - 1];
+                if (sel && last && sel === last) return true;
+            }
+        }
+
         return false;
     }
 
@@ -609,7 +626,6 @@
     // timeout elapses. Resolves with the new count either way.
     function waitForMoreProducts(previousCount, maxWaitMs = WAIT_FOR_PRODUCTS_MS) {
         return new Promise(resolve => {
-            const target = document.querySelector('#boxes') || document.body;
             const countNow = () => document.querySelectorAll(PRODUCT_SELECTOR).length;
             if (countNow() > previousCount) return resolve(countNow());
 
@@ -624,7 +640,7 @@
             const observer = new MutationObserver(() => {
                 if (countNow() > previousCount) finish();
             });
-            observer.observe(target, { childList: true, subtree: true });
+            observer.observe(document.body, { childList: true, subtree: true });
             const timer = setTimeout(finish, maxWaitMs);
         });
     }
