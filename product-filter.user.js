@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.5.1
-// @description  Filter Alza.cz products by minimum coupon/benefit/AlzaPlus+ discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
+// @version      2.5.2
+// @description  Filter Alza.cz products by minimum coupon/benefit/AlzaPlus+/Black Friday discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J. & Tomi
 // @match        https://www.alza.cz/*
 // @updateURL    https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js
@@ -14,7 +14,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.5.1';
+    const CURRENT_VERSION = '2.5.2';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         minDiscount:   'pf_min_discount',
@@ -23,10 +23,10 @@
         minimized:     'pf_minimized',
         sortMode:      'pf_sort_mode',
     };
-    const DISCOUNT_PRESETS = [0, 10, 20, 30, 40, 50];  // 0 = "Any coupon"
+    const DISCOUNT_PRESETS = [0, 10, 20, 30, 40, 50];  // 0 = "Any discount"
 
     // ─── State ───────────────────────────────────────────────────────────────────
-    let minDiscount      = 0;       // minimum coupon discount %; 0 = any coupon
+    let minDiscount      = 0;       // minimum discount %; 0 = any discount
     let autoScrollMode   = 0;       // 0=off, 1=top, 2=latest
     let currentSortMode  = 0;       // 0=off/default, 1=cheapest first, 2=expensive first
     let filteringEnabled = false;
@@ -254,7 +254,7 @@
             <div id="pf-count"></div>
 
             <div id="pf-filter-section">
-                <label class="pf-label">Minimum coupon discount</label>
+                <label class="pf-label">Minimum discount</label>
                 <div id="pf-discount-presets"></div>
             </div>
 
@@ -303,7 +303,7 @@
         btn.type = 'button';
         btn.className = 'pf-discount-btn';
         btn.dataset.discount = String(value);
-        btn.textContent = value === 0 ? 'Any coupon' : `≥ ${value}%`;
+        btn.textContent = value === 0 ? 'Any discount' : `≥ ${value}%`;
         btn.addEventListener('click', () => {
             minDiscount = value;
             save(STORAGE.minDiscount, minDiscount);
@@ -397,17 +397,20 @@
     }
 
     // Returns the best available discount % for a product card, or null if none.
-    // Handles three price box types:
-    //   1. Coupon block  (.coupon-block__price)
-    //   2. Benefit       (.ads-pb--benefit)
-    //   3. AlzaPlus+     (.ads-pb--alza-plus)
+    // Handles four price box types:
+    //   1. Coupon block             (.coupon-block__price)
+    //   2. Benefit                  (.ads-pb--benefit)
+    //   3. AlzaPlus+                (.ads-pb--alza-plus)
+    //   4. Black Friday & campaigns (.ads-pb--black-friday, .ads-pb)
     // Always uses the true original (struck-through) price as the base so that
-    // combined discounts (e.g. Benefit + coupon) are calculated correctly.
+    // combined discounts (e.g. Benefit / Black Friday + coupon) are calculated correctly.
     function getCouponDiscount(product) {
         // True original: the struck-through price shown on the card, e.g. "49 986,-"
         const trueOriginal = parsePrice(
             product.querySelector('.ads-pb__original-price--strike, .js-compare-price')?.textContent
         );
+
+        let bestDiscount = null;
 
         // Type 1: classic coupon block — use coupon price vs true original
         const couponPrice = parsePrice(product.querySelector('.coupon-block__price')?.textContent);
@@ -417,21 +420,35 @@
                 ? trueOriginal
                 : parsePrice(product.querySelector('.js-price-box__primary-price__value')?.textContent);
             if (isFinite(base) && base > 0 && couponPrice < base) {
-                return Math.round((base - couponPrice) / base * 100);
+                bestDiscount = Math.round((base - couponPrice) / base * 100);
             }
         }
 
-        // Type 2 & 3: Benefit / AlzaPlus+ price box
-        const priceBox = product.querySelector('.ads-pb--benefit, .ads-pb--alza-plus');
+        // Type 2, 3 & 4: Benefit / AlzaPlus+ / Black Friday / campaign price box
+        const priceBox = product.querySelector('.ads-pb--benefit, .ads-pb--alza-plus, .ads-pb--black-friday, .ads-pb');
         if (priceBox) {
+            // Check for explicit badge percentage in header (e.g. "BLACK FRIDAY -38 %")
+            const headerText = priceBox.querySelector('.ads-pb__header')?.textContent;
+            const badgeMatch = headerText ? headerText.match(/-(\d+)\s*%/) : null;
+            const badgeDiscount = badgeMatch ? parseInt(badgeMatch[1], 10) : null;
+
+            // Check calculated percentage from discounted vs original price
             const discounted = parsePrice(priceBox.querySelector('.ads-pb__price-value')?.textContent);
-            const original   = parsePrice(priceBox.querySelector('.ads-pb__original-price')?.textContent);
-            if (isFinite(discounted) && isFinite(original) && original > 0 && discounted < original) {
-                return Math.round((original - discounted) / original * 100);
+            const original   = parsePrice(priceBox.querySelector('.ads-pb__original-price')?.textContent) || trueOriginal;
+            const calcDiscount = (isFinite(discounted) && isFinite(original) && original > 0 && discounted < original)
+                ? Math.round((original - discounted) / original * 100)
+                : null;
+
+            const boxDiscount = (badgeDiscount !== null && calcDiscount !== null)
+                ? Math.max(badgeDiscount, calcDiscount)
+                : (badgeDiscount ?? calcDiscount);
+
+            if (boxDiscount !== null) {
+                bestDiscount = bestDiscount !== null ? Math.max(bestDiscount, boxDiscount) : boxDiscount;
             }
         }
 
-        return null;
+        return bestDiscount;
     }
 
     function applyFilter() {
@@ -511,8 +528,8 @@
                 const val = parsePrice(couponPriceEl.textContent);
                 if (!isNaN(val)) return val;
             }
-            // Priority 2: Benefit or AlzaPlus+ discounted price
-            const priceBox = el.querySelector('.ads-pb--benefit, .ads-pb--alza-plus');
+            // Priority 2: Benefit, AlzaPlus+, Black Friday or campaign discounted price
+            const priceBox = el.querySelector('.ads-pb--benefit, .ads-pb--alza-plus, .ads-pb--black-friday, .ads-pb');
             if (priceBox) {
                 const val = parsePrice(priceBox.querySelector('.ads-pb__price-value')?.textContent);
                 if (!isNaN(val)) return val;
@@ -547,7 +564,10 @@
     }
 
     function scrollToProductList() {
-        document.getElementById('ui-id-1')?.scrollIntoView({ behavior: 'instant' });
+        const target = document.getElementById('ui-id-1')
+            || document.getElementById('boxes')
+            || document.querySelector('.browsingitemcontainer');
+        target?.scrollIntoView({ behavior: 'instant' });
     }
 
     function scrollToLatestVisibleProduct() {
@@ -700,10 +720,12 @@
     // ─── MutationObserver ─────────────────────────────────────────────────────────
     // Watch #boxes for new product nodes and re-filter. Debounced to avoid
     // hammering querySelectorAll on every minor DOM mutation.
-    // Only attach if #boxes exists — observing document.body with subtree:true
-    // would fire on every tooltip, image load, etc. and tank performance.
-    const observerTarget = document.querySelector('#boxes');
-    if (observerTarget) {
+    let observerAttached = false;
+    function setupMutationObserver() {
+        if (observerAttached) return;
+        const observerTarget = document.querySelector('#boxes');
+        if (!observerTarget) return;
+        observerAttached = true;
         let debounceTimer = null;
         new MutationObserver(() => {
             if (isSorting) return;
@@ -715,6 +737,7 @@
             }, 200);
         }).observe(observerTarget, { childList: true, subtree: true });
     }
+    setupMutationObserver();
 
     // ─── Event listeners ──────────────────────────────────────────────────────────
     bubble.addEventListener('click', () => {
@@ -774,6 +797,7 @@
 
     // ─── Init ─────────────────────────────────────────────────────────────────────
     function init() {
+        setupMutationObserver();
         loadSavedState();
         updateFilterToggle();
         updateScrollUI();
