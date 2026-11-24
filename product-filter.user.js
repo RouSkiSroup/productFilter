@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Product Filter
 // @namespace    http://tampermonkey.net/
-// @version      2.5.3
+// @version      2.5.4
 // @description  Filter Alza.cz products by minimum coupon/benefit/AlzaPlus+/Black Friday discount %, with bulk page loading, auto-scroll, and effective coupon price sorting
 // @author       Filip J. & Tomi
 // @match        https://www.alza.cz/*
@@ -14,7 +14,7 @@
     'use strict';
 
     // ─── Constants ───────────────────────────────────────────────────────────────
-    const CURRENT_VERSION = '2.5.3';
+    const CURRENT_VERSION = '2.5.4';
     const RAW_URL = 'https://raw.githubusercontent.com/RouSkiSroup/productFilter/main/product-filter.user.js';
     const STORAGE = {
         minDiscount:   'pf_min_discount',
@@ -588,38 +588,38 @@
     const LOAD_MORE_SELECTOR = '.js-button-more, .button-more, a[class*="button-more"], a[class*="buttonMore"]';
     const WAIT_FOR_PRODUCTS_MS = 8000;
 
-    function clickLoadMoreButton() {
-        document.querySelector(LOAD_MORE_SELECTOR)?.click();
+    function isButtonVisible() {
+        const btn = document.querySelector(LOAD_MORE_SELECTOR);
+        if (!btn || btn.offsetParent === null) return false;
+        const style = window.getComputedStyle(btn);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (btn.classList.contains('disabled') || btn.getAttribute('aria-disabled') === 'true') return false;
+        return true;
     }
 
-    // True when there's no more content to load — either the pager has reached
-    // its last page, or the "load more" button is gone from the DOM.
-    function isAtLastPage() {
-        const btn = document.querySelector(LOAD_MORE_SELECTOR);
-        if (!btn || btn.offsetParent === null) return true;
-        const style = window.getComputedStyle(btn);
-        if (style.display === 'none' || style.visibility === 'hidden') return true;
-        if (btn.classList.contains('disabled') || btn.getAttribute('aria-disabled') === 'true') return true;
-
-        // Check pagerbottom: only considered at the last page if there is NO ellipsis,
-        // NO active next button, and the selected page is the last link.
-        const pager = document.getElementById('pagerbottom');
-        if (pager) {
-            const hasEllipsis = Array.from(pager.querySelectorAll('span')).some(s => s.textContent.includes('...'));
-            const nextBtn = pager.querySelector('.next, a[class*="next"]');
-            const hasNext = nextBtn && !nextBtn.classList.contains('disabled') && nextBtn.offsetParent !== null;
-
-            if (hasEllipsis || hasNext) return false;
-
-            const pageLinks = pager.querySelectorAll('.pgn');
-            if (pageLinks.length > 0) {
-                const sel = pager.querySelector('.pgn.sel, .pgn[aria-current="page"]');
-                const last = pageLinks[pageLinks.length - 1];
-                if (sel && last && sel === last) return true;
+    // Wait for the load-more button to become visible and ready.
+    // Handles the transition period when Alza temporarily hides or updates the button during AJAX.
+    async function waitForButtonReady(maxWaitMs = 3000) {
+        const start = Date.now();
+        while (Date.now() - start < maxWaitMs) {
+            if (isButtonVisible()) {
+                return document.querySelector(LOAD_MORE_SELECTOR);
             }
+            await new Promise(r => setTimeout(r, 150));
         }
+        return null;
+    }
 
-        return false;
+    function clickLoadMoreButton() {
+        const btn = document.querySelector(LOAD_MORE_SELECTOR);
+        if (btn) {
+            btn.click();
+        }
+    }
+
+    // True when there's no more content to load — the "load more" button is gone from the DOM.
+    function isAtLastPage() {
+        return !isButtonVisible();
     }
 
     // Wait until the product count grows past `previousCount`, or the max
@@ -661,15 +661,33 @@
 
         let reachedEnd = false;
         while (!stopRequested && (loadAll || currentLoadedPages < multiLoadPages)) {
-            if (isAtLastPage()) { reachedEnd = true; break; }
+            // Wait up to 3s for the load button to be ready (Alza temporarily hides it while updating)
+            const btn = await waitForButtonReady(3000);
+            if (!btn) {
+                reachedEnd = true;
+                break;
+            }
+
             const before = document.querySelectorAll(PRODUCT_SELECTOR).length;
-            clickLoadMoreButton();
+            btn.click();
+
             const after = await waitForMoreProducts(before);
             if (stopRequested) break;
-            currentLoadedPages++;
-            loadStatus.textContent = `Loading: ${currentLoadedPages} / ${targetLabel}`;
-            // If the click produced no new products, the page is exhausted (or stuck).
-            if (after === before) { reachedEnd = true; break; }
+
+            if (after === before) {
+                // If count didn't grow, wait briefly and check if button is truly gone
+                await new Promise(r => setTimeout(r, 600));
+                if (!isButtonVisible()) {
+                    reachedEnd = true;
+                    break;
+                }
+            } else {
+                currentLoadedPages++;
+                loadStatus.textContent = `Loading: ${currentLoadedPages} / ${targetLabel}`;
+            }
+
+            // Brief delay allowing DOM to settle before the next iteration
+            await new Promise(r => setTimeout(r, 350));
         }
 
         isMultiLoading = false;
